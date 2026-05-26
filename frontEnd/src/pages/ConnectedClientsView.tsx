@@ -4,10 +4,10 @@ import { SubForm } from "../components/SubForm";
 import { Badge, Button, Card, FilterTabs, PageIntro, SearchInput } from "../components/ui";
 import { MOCK_CONNECTED } from "../data/mockData";
 import { fmtBytes } from "../types";
-import type { ConnectedDevice, Subscription } from "../types";
+import type { ConnectedDevice, SubscriptionDraft } from "../types";
 
 interface ConnectedClientsViewProps {
-  onCreateSub: (data: Partial<Subscription>) => void;
+  onCreateSub: (data: SubscriptionDraft) => void | Promise<void>;
   subscribedMacs: Set<string>;
 }
 
@@ -190,8 +190,8 @@ export default function ConnectedClientsView({ onCreateSub, subscribedMacs }: Co
       {prefill && (
         <SubForm
           prefill={prefill}
-          onSave={(data) => {
-            onCreateSub(data);
+          onSave={async (data) => {
+            await onCreateSub(data);
             setPrefill(null);
           }}
           onClose={() => setPrefill(null)}

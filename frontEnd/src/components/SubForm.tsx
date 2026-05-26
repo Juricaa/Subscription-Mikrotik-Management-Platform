@@ -1,14 +1,14 @@
 import { useMemo, useState } from "react";
-import { Copy, Database, ShieldAlert } from "lucide-react";
+import { Copy, Database, Router, ShieldAlert } from "lucide-react";
 import { Button, FormField, Input, Modal, Select } from "./ui";
 import { PLANS } from "../types";
 import { buildQuotaScriptPreview, DEFAULT_QUOTA_GB, DEFAULT_QUOTA_INTERVAL, gbToBytes } from "../utils/mikrotikQuota";
-import type { Plan, Status, Subscription } from "../types";
+import type { Plan, Status, Subscription, SubscriptionDraft } from "../types";
 
 interface SubFormProps {
   initial?: Subscription | null;
   prefill?: { mac?: string; ip?: string };
-  onSave: (data: Partial<Subscription>) => void;
+  onSave: (data: SubscriptionDraft) => void | Promise<void>;
   onClose: () => void;
 }
 
@@ -23,12 +23,14 @@ type FormState = {
   dataLimitEnabled: boolean;
   dataLimitGb: string;
   dataLimitCheckInterval: string;
+  applyToRouter: boolean;
 };
 
 const quotaIntervals = ["1m", "5m", "10m", "30m", "1h"];
 
 export function SubForm({ initial, prefill, onSave, onClose }: SubFormProps) {
   const [copied, setCopied] = useState(false);
+  const [applying, setApplying] = useState(false);
   const [form, setForm] = useState<FormState>({
     clientName: initial?.clientName ?? "",
     mac: initial?.mac ?? prefill?.mac ?? "",
@@ -40,6 +42,7 @@ export function SubForm({ initial, prefill, onSave, onClose }: SubFormProps) {
     dataLimitEnabled: initial?.dataLimitEnabled ?? false,
     dataLimitGb: String(initial?.dataLimitGb || DEFAULT_QUOTA_GB),
     dataLimitCheckInterval: initial?.dataLimitCheckInterval ?? DEFAULT_QUOTA_INTERVAL,
+    applyToRouter: true,
   });
 
   const set = <K extends keyof FormState>(field: K, value: FormState[K]) => {
@@ -68,9 +71,11 @@ export function SubForm({ initial, prefill, onSave, onClose }: SubFormProps) {
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const dataLimitGb = form.dataLimitEnabled ? normalizedQuotaGb : 0;
-    onSave({
+    setApplying(true);
+    try {
+      await onSave({
       clientName: form.clientName,
       mac: form.mac,
       ip: form.ip,
@@ -83,9 +88,13 @@ export function SubForm({ initial, prefill, onSave, onClose }: SubFormProps) {
       dataLimitBytes: gbToBytes(dataLimitGb),
       dataLimitCheckInterval: form.dataLimitCheckInterval,
       dataLimitAction: "firewall-block",
-      dataLimitReached: initial?.dataLimitReached ?? false,
-    });
-    onClose();
+        dataLimitReached: initial?.dataLimitReached ?? false,
+        applyToRouter: form.applyToRouter,
+      });
+      onClose();
+    } finally {
+      setApplying(false);
+    }
   };
 
   return (
@@ -129,6 +138,28 @@ export function SubForm({ initial, prefill, onSave, onClose }: SubFormProps) {
             <Input placeholder="Remarque libre…" value={form.comment} onChange={(event) => set("comment", event.target.value)} />
           </FormField>
         </div>
+      </div>
+
+      <div className="mt-5 rounded-3xl border border-primary/15 bg-primary/[0.06] p-4">
+        <label className="flex cursor-pointer flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex items-start gap-3">
+            <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+              <Router size={18} />
+            </span>
+            <span>
+              <span className="block text-sm font-semibold text-foreground">Appliquer directement sur MikroTik via backend</span>
+              <span className="mt-1 block font-mono text-[11px] leading-relaxed text-muted-foreground">
+                Le frontend envoie l'abonnement au backend, puis le backend exécute le script sur RouterOS REST API. Aucun mot de passe MikroTik n'est exposé dans le navigateur.
+              </span>
+            </span>
+          </div>
+          <input
+            type="checkbox"
+            checked={form.applyToRouter}
+            onChange={(event) => set("applyToRouter", event.target.checked)}
+            className="mt-1 h-5 w-5 rounded border-border accent-primary"
+          />
+        </label>
       </div>
 
       <div className="mt-5 rounded-3xl border border-border bg-muted/35 p-4">
@@ -198,8 +229,8 @@ export function SubForm({ initial, prefill, onSave, onClose }: SubFormProps) {
         <Button onClick={onClose} variant="secondary" className="w-full sm:w-auto">
           Annuler
         </Button>
-        <Button variant="primary" onClick={handleSave} className="w-full sm:w-auto">
-          {isEdit ? "Enregistrer" : "Créer + Appliquer MikroTik"}
+        <Button variant="primary" onClick={handleSave} disabled={applying} className="w-full sm:w-auto">
+          {applying ? "Application…" : isEdit ? "Enregistrer" : "Créer + Appliquer MikroTik"}
         </Button>
       </div>
     </Modal>

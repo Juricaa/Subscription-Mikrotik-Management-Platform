@@ -4,8 +4,9 @@ import { Toast } from "../components/layout/Toast";
 import { Topbar } from "../components/layout/Topbar";
 import { getNavItem } from "../config/navigation";
 import { MOCK_SUBS } from "../data/mockData";
+import { applySubscriptionOnRouter, resetSubscriptionQuotaOnRouter } from "../services/mikrotikApi";
 import { gbToBytes } from "../utils/mikrotikQuota";
-import type { Subscription, View } from "../types";
+import type { Subscription, SubscriptionDraft, View } from "../types";
 
 const DashboardView = lazy(() => import("../pages/DashboardView"));
 const SubscriptionsView = lazy(() => import("../pages/SubscriptionsView"));
@@ -45,35 +46,63 @@ export default function App() {
 
   const notify = (msg: string, type: "ok" | "err" = "ok") => setToast({ msg, type });
 
-  const handleSaveSub = (data: Partial<Subscription>, id?: string) => {
+  const handleSaveSub = async (data: SubscriptionDraft, id?: string) => {
+    const { applyToRouter = true, ...subscriptionData } = data;
+
+    const existing = id ? subs.find((sub) => sub.id === id) : null;
+    if (id && !existing) {
+      notify("Abonnement introuvable", "err");
+      throw new Error("Abonnement introuvable");
+    }
+
+    const target: Subscription = id
+      ? {
+          ...(existing as Subscription),
+          ...subscriptionData,
+        }
+      : {
+          id: `s${Date.now()}`,
+          clientName: subscriptionData.clientName ?? "",
+          mac: subscriptionData.mac ?? "",
+          ip: subscriptionData.ip ?? "",
+          rateLimit: subscriptionData.rateLimit ?? "10M/5M",
+          status: subscriptionData.status ?? "active",
+          expiresAt: subscriptionData.expiresAt ?? "",
+          comment: subscriptionData.comment ?? "",
+          dataLimitEnabled: subscriptionData.dataLimitEnabled ?? false,
+          dataLimitGb: subscriptionData.dataLimitGb ?? 0,
+          dataLimitBytes: subscriptionData.dataLimitBytes ?? gbToBytes(subscriptionData.dataLimitGb ?? 0),
+          dataLimitCheckInterval: subscriptionData.dataLimitCheckInterval ?? "5m",
+          dataLimitAction: subscriptionData.dataLimitAction ?? "firewall-block",
+          dataLimitReached: subscriptionData.dataLimitReached ?? false,
+          bytesIn: 0,
+          bytesOut: 0,
+          lastSeen: "—",
+        };
+
+    if (applyToRouter) {
+      try {
+        await applySubscriptionOnRouter(target);
+      } catch (error) {
+        notify(error instanceof Error ? error.message : "Erreur backend MikroTik", "err");
+        throw error;
+      }
+    }
+
     if (id) {
-      setSubs((prev) => prev.map((sub) => (sub.id === id ? { ...sub, ...data } : sub)));
-      notify("Abonnement mis à jour — MikroTik notifié");
+      setSubs((prev) => prev.map((sub) => (sub.id === id ? target : sub)));
+      notify(applyToRouter ? "Abonnement mis à jour sur MikroTik" : "Abonnement mis à jour localement");
       return;
     }
 
-    const next: Subscription = {
-      id: `s${Date.now()}`,
-      clientName: data.clientName ?? "",
-      mac: data.mac ?? "",
-      ip: data.ip ?? "",
-      rateLimit: data.rateLimit ?? "10M/5M",
-      status: data.status ?? "active",
-      expiresAt: data.expiresAt ?? "",
-      comment: data.comment ?? "",
-      dataLimitEnabled: data.dataLimitEnabled ?? false,
-      dataLimitGb: data.dataLimitGb ?? 0,
-      dataLimitBytes: data.dataLimitBytes ?? gbToBytes(data.dataLimitGb ?? 0),
-      dataLimitCheckInterval: data.dataLimitCheckInterval ?? "5m",
-      dataLimitAction: data.dataLimitAction ?? "firewall-block",
-      dataLimitReached: data.dataLimitReached ?? false,
-      bytesIn: 0,
-      bytesOut: 0,
-      lastSeen: "—",
-    };
-
-    setSubs((prev) => [...prev, next]);
-    notify(next.dataLimitEnabled ? "Abonnement créé + quota data MikroTik programmé" : "Bail DHCP créé + Simple Queue ajoutée sur MikroTik");
+    setSubs((prev) => [...prev, target]);
+    notify(
+      applyToRouter
+        ? target.dataLimitEnabled
+          ? "Abonnement créé + quota data appliqué sur MikroTik"
+          : "Abonnement créé + Simple Queue appliquée sur MikroTik"
+        : "Abonnement créé localement",
+    );
   };
 
   const handleDeleteSub = (id: string) => {
@@ -90,6 +119,54 @@ export default function App() {
       ),
     );
     notify("Statut modifié — règle MikroTik appliquée");
+  };
+
+
+  const handleResetQuota = async (id: string, options: { expiresAt?: string } = {}) => {
+    const target = subs.find((sub) => sub.id === id);
+    if (!target) {
+      notify("Abonnement introuvable", "err");
+      return;
+    }
+
+    if (!target.dataLimitEnabled) {
+      notify("Aucun quota data actif pour cet abonnement", "err");
+      return;
+    }
+
+    const renewedTarget = {
+      ...target,
+      expiresAt: options.expiresAt || target.expiresAt,
+      status: "active" as const,
+    };
+
+    try {
+      await resetSubscriptionQuotaOnRouter(renewedTarget);
+      setSubs((prev) =>
+        prev.map((sub) =>
+          sub.id === id
+            ? {
+                ...sub,
+                expiresAt: renewedTarget.expiresAt,
+                status: "active",
+                bytesIn: 0,
+                bytesOut: 0,
+                dataLimitReached: false,
+                lastSeen: new Date().toLocaleString("fr-FR", {
+                  year: "numeric",
+                  month: "2-digit",
+                  day: "2-digit",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                }),
+              }
+            : sub,
+        ),
+      );
+      notify("Quota remis à zéro et expiration renouvelée sur MikroTik");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Erreur reset quota MikroTik", "err");
+    }
   };
 
   const subscribedMacs = useMemo(() => new Set(subs.map((sub) => sub.mac)), [subs]);
@@ -134,8 +211,8 @@ export default function App() {
                 {view === "dashboard" && <DashboardView subs={subs} />}
                 {view === "clients" && (
                   <ConnectedClientsView
-                    onCreateSub={(data) => {
-                      handleSaveSub(data);
+                    onCreateSub={async (data) => {
+                      await handleSaveSub(data);
                       setView("subscriptions");
                     }}
                     subscribedMacs={subscribedMacs}
@@ -147,6 +224,7 @@ export default function App() {
                     onSave={handleSaveSub}
                     onDelete={handleDeleteSub}
                     onToggle={handleToggleSub}
+                    onResetQuota={handleResetQuota}
                   />
                 )}
                 {view === "router" && <RouterView />}

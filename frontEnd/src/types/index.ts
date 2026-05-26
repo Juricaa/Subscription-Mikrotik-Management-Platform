@@ -22,6 +22,11 @@ export interface Subscription {
   lastSeen: string;
 }
 
+
+export type SubscriptionDraft = Partial<Subscription> & {
+  applyToRouter?: boolean;
+};
+
 export interface LogEntry {
   id: string;
   timestamp: string;

@@ -1,27 +1,32 @@
 import { useState } from "react";
-import { Edit2, Pause, Play, Plus, Trash2 } from "lucide-react";
+import { Edit2, Info, Pause, Play, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { Button, EmptyState, FilterTabs, IconButton, SearchInput, SortableTH, TableCard } from "../components/ui";
 import { SubForm } from "../components/SubForm";
+import { ResetQuotaModal } from "../components/ResetQuotaModal";
+import { SubscriptionReceiptModal } from "../components/SubscriptionReceiptModal";
 import { STATUS_CFG, fmtBytes } from "../types";
 import { getQuotaBytes, getQuotaPercent, getSubscriptionUsage } from "../utils/mikrotikQuota";
-import type { Status, Subscription } from "../types";
+import type { Status, Subscription, SubscriptionDraft } from "../types";
 
 interface SubscriptionsViewProps {
   subs: Subscription[];
-  onSave: (data: Partial<Subscription>, id?: string) => void;
+  onSave: (data: SubscriptionDraft, id?: string) => void | Promise<void>;
   onDelete: (id: string) => void;
   onToggle: (id: string) => void;
+  onResetQuota: (id: string, data?: { expiresAt?: string }) => void | Promise<void>;
 }
 
 type SortKey = keyof Subscription;
 
-export default function SubscriptionsView({ subs, onSave, onDelete, onToggle }: SubscriptionsViewProps) {
+export default function SubscriptionsView({ subs, onSave, onDelete, onToggle, onResetQuota }: SubscriptionsViewProps) {
   const [search, setSearch] = useState("");
   const [filterStatus, setFilter] = useState<Status | "all">("all");
   const [sortCol, setSortCol] = useState<SortKey>("clientName");
   const [sortAsc, setSortAsc] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editTarget, setEditTarget] = useState<Subscription | null>(null);
+  const [resetTarget, setResetTarget] = useState<Subscription | null>(null);
+  const [receiptTarget, setReceiptTarget] = useState<Subscription | null>(null);
 
   const handleSort = (col: SortKey) => {
     if (sortCol === col) setSortAsc((value) => !value);
@@ -89,11 +94,11 @@ export default function SubscriptionsView({ subs, onSave, onDelete, onToggle }: 
         footer={
           <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
             <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">{filtered.length} / {subs.length} entrée(s)</span>
-            <span className="font-mono text-[10px] text-muted-foreground">Appliqué via Django → MikroTik REST API</span>
+            <span className="font-mono text-[10px] text-muted-foreground">Appliqué via Backend Node → MikroTik REST API</span>
           </div>
         }
       >
-        <table className="w-full min-w-[1120px]">
+        <table className="w-full min-w-[1180px]">
           <thead>
             <tr className="border-b border-border bg-muted/30">
               <SortableTH col="clientName" sortCol={sortCol} sortAsc={sortAsc} onSort={handleSort}>Client</SortableTH>
@@ -105,7 +110,7 @@ export default function SubscriptionsView({ subs, onSave, onDelete, onToggle }: 
               <th className="px-4 py-3 text-left font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Trafic ↓/↑</th>
               <th className="px-4 py-3 text-left font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Quota data</th>
               <th className="px-4 py-3 text-left font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Dernière vue</th>
-              <th className="px-4 py-3 w-32" />
+              <th className="px-4 py-3 w-40" />
             </tr>
           </thead>
           <tbody>
@@ -181,6 +186,24 @@ export default function SubscriptionsView({ subs, onSave, onDelete, onToggle }: 
                         <Edit2 size={13} />
                       </IconButton>
                       <IconButton
+                        onClick={() => setReceiptTarget(sub)}
+                        className="hover:border-blue-400/30 hover:text-blue-400"
+                        title="Voir le reçu"
+                        aria-label={`Voir le reçu de ${sub.clientName}`}
+                      >
+                        <Info size={13} />
+                      </IconButton>
+                      {sub.dataLimitEnabled && (
+                        <IconButton
+                          onClick={() => setResetTarget(sub)}
+                          className="hover:border-primary/30 hover:text-primary"
+                          title="Reset quota + nouvelle expiration"
+                          aria-label={`Remettre le quota de ${sub.clientName} à zéro`}
+                        >
+                          <RotateCcw size={13} />
+                        </IconButton>
+                      )}
+                      <IconButton
                         onClick={() => onToggle(sub.id)}
                         className={sub.status === "active" ? "hover:text-amber-400" : "hover:text-emerald-400"}
                         title={sub.status === "active" ? "Suspendre" : "Activer"}
@@ -207,6 +230,21 @@ export default function SubscriptionsView({ subs, onSave, onDelete, onToggle }: 
             setShowForm(false);
             setEditTarget(null);
           }}
+        />
+      )}
+
+      {resetTarget && (
+        <ResetQuotaModal
+          subscription={resetTarget}
+          onClose={() => setResetTarget(null)}
+          onConfirm={(expiresAt) => onResetQuota(resetTarget.id, { expiresAt })}
+        />
+      )}
+
+      {receiptTarget && (
+        <SubscriptionReceiptModal
+          subscription={receiptTarget}
+          onClose={() => setReceiptTarget(null)}
         />
       )}
     </div>
