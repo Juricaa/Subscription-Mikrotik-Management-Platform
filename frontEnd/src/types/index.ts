@@ -1,5 +1,6 @@
 export type Status = "active" | "suspended" | "expired" | "pending";
 export type Plan = "10M/5M" | "20M/10M" | "50M/20M" | "100M/50M";
+export type DataLimitAction = "firewall-block";
 
 export interface Subscription {
   id: string;
@@ -10,6 +11,12 @@ export interface Subscription {
   status: Status;
   expiresAt: string;
   comment: string;
+  dataLimitEnabled: boolean;
+  dataLimitGb: number;
+  dataLimitBytes: number;
+  dataLimitCheckInterval: string;
+  dataLimitAction: DataLimitAction;
+  dataLimitReached: boolean;
   bytesIn: number;
   bytesOut: number;
   lastSeen: string;
@@ -50,7 +57,9 @@ export const STATUS_CFG: Record<Status, { label: string; color: string; dot: str
 export const PLANS: Plan[] = ["10M/5M", "20M/10M", "50M/20M", "100M/50M"];
 
 export function fmtBytes(n: number): string {
-  if (n >= 1e9) return (n / 1e9).toFixed(1) + " GB";
-  if (n >= 1e6) return (n / 1e6).toFixed(1) + " MB";
-  return (n / 1e3).toFixed(0) + " KB";
+  if (!Number.isFinite(n) || n <= 0) return "0 KB";
+  if (n >= 1024 ** 3) return (n / 1024 ** 3).toFixed(1) + " GB";
+  if (n >= 1024 ** 2) return (n / 1024 ** 2).toFixed(1) + " MB";
+  if (n >= 1024) return (n / 1024).toFixed(0) + " KB";
+  return n.toFixed(0) + " B";
 }

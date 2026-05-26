@@ -4,6 +4,7 @@ import { Toast } from "../components/layout/Toast";
 import { Topbar } from "../components/layout/Topbar";
 import { getNavItem } from "../config/navigation";
 import { MOCK_SUBS } from "../data/mockData";
+import { gbToBytes } from "../utils/mikrotikQuota";
 import type { Subscription, View } from "../types";
 
 const DashboardView = lazy(() => import("../pages/DashboardView"));
@@ -60,13 +61,19 @@ export default function App() {
       status: data.status ?? "active",
       expiresAt: data.expiresAt ?? "",
       comment: data.comment ?? "",
+      dataLimitEnabled: data.dataLimitEnabled ?? false,
+      dataLimitGb: data.dataLimitGb ?? 0,
+      dataLimitBytes: data.dataLimitBytes ?? gbToBytes(data.dataLimitGb ?? 0),
+      dataLimitCheckInterval: data.dataLimitCheckInterval ?? "5m",
+      dataLimitAction: data.dataLimitAction ?? "firewall-block",
+      dataLimitReached: data.dataLimitReached ?? false,
       bytesIn: 0,
       bytesOut: 0,
       lastSeen: "—",
     };
 
     setSubs((prev) => [...prev, next]);
-    notify("Bail DHCP créé + Simple Queue ajoutée sur MikroTik");
+    notify(next.dataLimitEnabled ? "Abonnement créé + quota data MikroTik programmé" : "Bail DHCP créé + Simple Queue ajoutée sur MikroTik");
   };
 
   const handleDeleteSub = (id: string) => {

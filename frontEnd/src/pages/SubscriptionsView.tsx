@@ -3,6 +3,7 @@ import { Edit2, Pause, Play, Plus, Trash2 } from "lucide-react";
 import { Button, EmptyState, FilterTabs, IconButton, SearchInput, SortableTH, TableCard } from "../components/ui";
 import { SubForm } from "../components/SubForm";
 import { STATUS_CFG, fmtBytes } from "../types";
+import { getQuotaBytes, getQuotaPercent, getSubscriptionUsage } from "../utils/mikrotikQuota";
 import type { Status, Subscription } from "../types";
 
 interface SubscriptionsViewProps {
@@ -92,7 +93,7 @@ export default function SubscriptionsView({ subs, onSave, onDelete, onToggle }: 
           </div>
         }
       >
-        <table className="w-full min-w-[980px]">
+        <table className="w-full min-w-[1120px]">
           <thead>
             <tr className="border-b border-border bg-muted/30">
               <SortableTH col="clientName" sortCol={sortCol} sortAsc={sortAsc} onSort={handleSort}>Client</SortableTH>
@@ -102,6 +103,7 @@ export default function SubscriptionsView({ subs, onSave, onDelete, onToggle }: 
               <SortableTH col="status" sortCol={sortCol} sortAsc={sortAsc} onSort={handleSort}>Statut</SortableTH>
               <SortableTH col="expiresAt" sortCol={sortCol} sortAsc={sortAsc} onSort={handleSort}>Expiration</SortableTH>
               <th className="px-4 py-3 text-left font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Trafic ↓/↑</th>
+              <th className="px-4 py-3 text-left font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Quota data</th>
               <th className="px-4 py-3 text-left font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Dernière vue</th>
               <th className="px-4 py-3 w-32" />
             </tr>
@@ -111,6 +113,10 @@ export default function SubscriptionsView({ subs, onSave, onDelete, onToggle }: 
             {filtered.map((sub, index) => {
               const statusConfig = STATUS_CFG[sub.status];
               const expiringSoon = sub.status === "active" && new Date(sub.expiresAt) <= new Date(Date.now() + 7 * 86_400_000);
+              const usage = getSubscriptionUsage(sub);
+              const quotaBytes = getQuotaBytes(sub);
+              const quotaPercent = getQuotaPercent(sub);
+              const quotaWarning = sub.dataLimitEnabled && quotaPercent >= 85;
 
               return (
                 <tr
@@ -139,7 +145,7 @@ export default function SubscriptionsView({ subs, onSave, onDelete, onToggle }: 
                     </span>
                   </td>
                   <td className="px-4 py-3">
-                    {sub.bytesIn > 0 ? (
+                    {sub.bytesIn > 0 || sub.bytesOut > 0 ? (
                       <div className="font-mono text-[10px]">
                         <span className="text-emerald-400">↓{fmtBytes(sub.bytesIn)}</span>
                         <span className="text-muted-foreground"> / </span>
@@ -147,6 +153,25 @@ export default function SubscriptionsView({ subs, onSave, onDelete, onToggle }: 
                       </div>
                     ) : (
                       <span className="font-mono text-[10px] text-muted-foreground/40">—</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    {sub.dataLimitEnabled && quotaBytes > 0 ? (
+                      <div className="min-w-32">
+                        <div className="mb-1 flex items-center justify-between gap-2 font-mono text-[10px]">
+                          <span className={quotaWarning ? "text-amber-400" : "text-muted-foreground"}>{fmtBytes(usage)}</span>
+                          <span className={sub.dataLimitReached || quotaPercent >= 100 ? "text-red-400" : "text-primary"}>{quotaPercent}%</span>
+                        </div>
+                        <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                          <div
+                            className={`h-full rounded-full transition-all ${sub.dataLimitReached || quotaPercent >= 100 ? "bg-red-400" : quotaWarning ? "bg-amber-400" : "bg-primary"}`}
+                            style={{ width: `${quotaPercent}%` }}
+                          />
+                        </div>
+                        <div className="mt-1 font-mono text-[9px] text-muted-foreground">Limite {sub.dataLimitGb} Go · {sub.dataLimitCheckInterval}</div>
+                      </div>
+                    ) : (
+                      <span className="font-mono text-[10px] text-muted-foreground/40">Illimité</span>
                     )}
                   </td>
                   <td className="px-4 py-3 font-mono text-[10px] text-muted-foreground">{sub.lastSeen}</td>
