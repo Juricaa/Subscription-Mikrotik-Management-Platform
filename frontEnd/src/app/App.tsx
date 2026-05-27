@@ -4,9 +4,9 @@ import { Toast } from "../components/layout/Toast";
 import { Topbar } from "../components/layout/Topbar";
 import { getNavItem } from "../config/navigation";
 import { MOCK_SUBS } from "../data/mockData";
-import { applySubscriptionOnRouter, resetSubscriptionQuotaOnRouter } from "../services/mikrotikApi";
+import { applySubscriptionOnRouter, deleteSubscriptionFromDatabase, fetchSubscriptionsFromDatabase, resetSubscriptionQuotaOnRouter, saveSubscriptionToDatabase } from "../services/mikrotikApi";
 import { gbToBytes } from "../utils/mikrotikQuota";
-import type { Subscription, SubscriptionDraft, View } from "../types";
+import type { Subscription, SubscriptionDraft, SubscriptionRenewalPayload, View } from "../types";
 
 const DashboardView = lazy(() => import("../pages/DashboardView"));
 const SubscriptionsView = lazy(() => import("../pages/SubscriptionsView"));
@@ -39,12 +39,49 @@ export default function App() {
   }, [dark]);
 
   useEffect(() => {
+    let alive = true;
+    fetchSubscriptionsFromDatabase()
+      .then((items) => {
+        if (alive) {
+          setSubs(items.length > 0 ? items : MOCK_SUBS);
+        }
+      })
+      .catch(() => {
+        if (alive) setSubs(MOCK_SUBS);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!toast) return;
     const timer = window.setTimeout(() => setToast(null), 3200);
     return () => window.clearTimeout(timer);
   }, [toast]);
 
   const notify = (msg: string, type: "ok" | "err" = "ok") => setToast({ msg, type });
+
+  const buildFallbackSubscription = (data: SubscriptionDraft, id?: string, existing?: Subscription | null): Subscription => ({
+    ...(existing || {}),
+    id: id || existing?.id || `local-${Date.now()}`,
+    clientName: data.clientName ?? existing?.clientName ?? "",
+    mac: data.mac ?? existing?.mac ?? "",
+    ip: data.ip ?? existing?.ip ?? "",
+    rateLimit: data.rateLimit ?? existing?.rateLimit ?? "10M/5M",
+    status: data.status ?? existing?.status ?? "active",
+    expiresAt: data.expiresAt ?? existing?.expiresAt ?? "",
+    comment: data.comment ?? existing?.comment ?? "",
+    dataLimitEnabled: data.dataLimitEnabled ?? existing?.dataLimitEnabled ?? false,
+    dataLimitGb: data.dataLimitGb ?? existing?.dataLimitGb ?? 0,
+    dataLimitBytes: data.dataLimitBytes ?? existing?.dataLimitBytes ?? gbToBytes(data.dataLimitGb ?? existing?.dataLimitGb ?? 0),
+    dataLimitCheckInterval: data.dataLimitCheckInterval ?? existing?.dataLimitCheckInterval ?? "5m",
+    dataLimitAction: data.dataLimitAction ?? existing?.dataLimitAction ?? "firewall-block",
+    dataLimitReached: data.dataLimitReached ?? existing?.dataLimitReached ?? false,
+    bytesIn: data.bytesIn ?? existing?.bytesIn ?? 0,
+    bytesOut: data.bytesOut ?? existing?.bytesOut ?? 0,
+    lastSeen: data.lastSeen ?? existing?.lastSeen ?? "—",
+  });
 
   const handleSaveSub = async (data: SubscriptionDraft, id?: string) => {
     const { applyToRouter = true, ...subscriptionData } = data;
@@ -55,103 +92,89 @@ export default function App() {
       throw new Error("Abonnement introuvable");
     }
 
-    const target: Subscription = id
-      ? {
-          ...(existing as Subscription),
-          ...subscriptionData,
-        }
-      : {
-          id: `s${Date.now()}`,
-          clientName: subscriptionData.clientName ?? "",
-          mac: subscriptionData.mac ?? "",
-          ip: subscriptionData.ip ?? "",
-          rateLimit: subscriptionData.rateLimit ?? "10M/5M",
-          status: subscriptionData.status ?? "active",
-          expiresAt: subscriptionData.expiresAt ?? "",
-          comment: subscriptionData.comment ?? "",
-          dataLimitEnabled: subscriptionData.dataLimitEnabled ?? false,
-          dataLimitGb: subscriptionData.dataLimitGb ?? 0,
-          dataLimitBytes: subscriptionData.dataLimitBytes ?? gbToBytes(subscriptionData.dataLimitGb ?? 0),
-          dataLimitCheckInterval: subscriptionData.dataLimitCheckInterval ?? "5m",
-          dataLimitAction: subscriptionData.dataLimitAction ?? "firewall-block",
-          dataLimitReached: subscriptionData.dataLimitReached ?? false,
-          bytesIn: 0,
-          bytesOut: 0,
-          lastSeen: "—",
-        };
+    const fallbackTarget = buildFallbackSubscription(subscriptionData, id, existing);
 
-    if (applyToRouter) {
-      try {
-        await applySubscriptionOnRouter(target);
-      } catch (error) {
-        notify(error instanceof Error ? error.message : "Erreur backend MikroTik", "err");
-        throw error;
+    try {
+      const saved = applyToRouter
+        ? (await applySubscriptionOnRouter(id ? fallbackTarget : subscriptionData)).subscription ?? fallbackTarget
+        : await saveSubscriptionToDatabase(subscriptionData, id);
+
+      if (id) {
+        setSubs((prev) => prev.map((sub) => (sub.id === id ? saved : sub)));
+        notify(applyToRouter ? "Abonnement mis à jour dans MySQL + MikroTik" : "Abonnement mis à jour dans MySQL");
+        return;
       }
-    }
 
-    if (id) {
+      setSubs((prev) => [...prev, saved]);
+      notify(
+        applyToRouter
+          ? saved.dataLimitEnabled
+            ? "Abonnement créé dans MySQL + quota data appliqué sur MikroTik"
+            : "Abonnement créé dans MySQL + Simple Queue appliquée sur MikroTik"
+          : "Abonnement créé dans MySQL",
+      );
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Erreur backend Django/MikroTik", "err");
+      throw error;
+    }
+  };
+
+  const handleDeleteSub = async (id: string) => {
+    try {
+      await deleteSubscriptionFromDatabase(id);
+      setSubs((prev) => prev.filter((sub) => sub.id !== id));
+      notify("Abonnement supprimé de MySQL");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Erreur suppression MySQL", "err");
+    }
+  };
+
+  const handleToggleSub = async (id: string) => {
+    const target = subs.find((sub) => sub.id === id);
+    if (!target) return;
+    const nextStatus = target.status === "active" ? "suspended" : "active";
+    const optimistic = { ...target, status: nextStatus };
+    setSubs((prev) => prev.map((sub) => (sub.id === id ? optimistic : sub)));
+
+    try {
+      const saved = await saveSubscriptionToDatabase({ status: nextStatus }, id);
+      setSubs((prev) => prev.map((sub) => (sub.id === id ? saved : sub)));
+      notify("Statut modifié dans MySQL");
+    } catch (error) {
       setSubs((prev) => prev.map((sub) => (sub.id === id ? target : sub)));
-      notify(applyToRouter ? "Abonnement mis à jour sur MikroTik" : "Abonnement mis à jour localement");
-      return;
+      notify(error instanceof Error ? error.message : "Erreur changement statut", "err");
     }
-
-    setSubs((prev) => [...prev, target]);
-    notify(
-      applyToRouter
-        ? target.dataLimitEnabled
-          ? "Abonnement créé + quota data appliqué sur MikroTik"
-          : "Abonnement créé + Simple Queue appliquée sur MikroTik"
-        : "Abonnement créé localement",
-    );
-  };
-
-  const handleDeleteSub = (id: string) => {
-    setSubs((prev) => prev.filter((sub) => sub.id !== id));
-    notify("Bail DHCP et Queue supprimés du routeur");
-  };
-
-  const handleToggleSub = (id: string) => {
-    setSubs((prev) =>
-      prev.map((sub) =>
-        sub.id === id
-          ? { ...sub, status: sub.status === "active" ? "suspended" : "active" }
-          : sub,
-      ),
-    );
-    notify("Statut modifié — règle MikroTik appliquée");
   };
 
 
-  const handleResetQuota = async (id: string, options: { expiresAt?: string } = {}) => {
+  const handleResetQuota = async (id: string, renewal: SubscriptionRenewalPayload) => {
     const target = subs.find((sub) => sub.id === id);
     if (!target) {
       notify("Abonnement introuvable", "err");
       return;
     }
 
-    if (!target.dataLimitEnabled) {
-      notify("Aucun quota data actif pour cet abonnement", "err");
-      return;
-    }
-
-    const renewedTarget = {
+    const renewedTarget: Subscription = {
       ...target,
-      expiresAt: options.expiresAt || target.expiresAt,
-      status: "active" as const,
+      expiresAt: renewal.expiresAt || target.expiresAt,
+      rateLimit: renewal.rateLimit || target.rateLimit,
+      dataLimitEnabled: renewal.dataLimitEnabled,
+      dataLimitGb: renewal.dataLimitGb,
+      dataLimitBytes: renewal.dataLimitBytes,
+      dataLimitCheckInterval: renewal.dataLimitCheckInterval || target.dataLimitCheckInterval,
+      dataLimitReached: false,
+      status: "active",
+      bytesIn: 0,
+      bytesOut: 0,
     };
 
     try {
-      await resetSubscriptionQuotaOnRouter(renewedTarget);
+      const response = await resetSubscriptionQuotaOnRouter(renewedTarget);
       setSubs((prev) =>
         prev.map((sub) =>
           sub.id === id
-            ? {
-                ...sub,
-                expiresAt: renewedTarget.expiresAt,
-                status: "active",
-                bytesIn: 0,
-                bytesOut: 0,
-                dataLimitReached: false,
+            ? response.subscription ?? {
+                ...renewedTarget,
                 lastSeen: new Date().toLocaleString("fr-FR", {
                   year: "numeric",
                   month: "2-digit",
@@ -163,7 +186,7 @@ export default function App() {
             : sub,
         ),
       );
-      notify("Quota remis à zéro et expiration renouvelée sur MikroTik");
+      notify("Quota remis à zéro, plan/quota renouvelés et MySQL + MikroTik mis à jour");
     } catch (error) {
       notify(error instanceof Error ? error.message : "Erreur reset quota MikroTik", "err");
     }

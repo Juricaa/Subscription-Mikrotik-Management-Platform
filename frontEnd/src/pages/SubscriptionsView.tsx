@@ -6,14 +6,14 @@ import { ResetQuotaModal } from "../components/ResetQuotaModal";
 import { SubscriptionReceiptModal } from "../components/SubscriptionReceiptModal";
 import { STATUS_CFG, fmtBytes } from "../types";
 import { getQuotaBytes, getQuotaPercent, getSubscriptionUsage } from "../utils/mikrotikQuota";
-import type { Status, Subscription, SubscriptionDraft } from "../types";
+import type { Status, Subscription, SubscriptionDraft, SubscriptionRenewalPayload } from "../types";
 
 interface SubscriptionsViewProps {
   subs: Subscription[];
   onSave: (data: SubscriptionDraft, id?: string) => void | Promise<void>;
   onDelete: (id: string) => void;
   onToggle: (id: string) => void;
-  onResetQuota: (id: string, data?: { expiresAt?: string }) => void | Promise<void>;
+  onResetQuota: (id: string, data: SubscriptionRenewalPayload) => void | Promise<void>;
 }
 
 type SortKey = keyof Subscription;
@@ -94,7 +94,7 @@ export default function SubscriptionsView({ subs, onSave, onDelete, onToggle, on
         footer={
           <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
             <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">{filtered.length} / {subs.length} entrée(s)</span>
-            <span className="font-mono text-[10px] text-muted-foreground">Appliqué via Backend Node → MikroTik REST API</span>
+            <span className="font-mono text-[10px] text-muted-foreground">Données MySQL via Backend Django → MikroTik REST API</span>
           </div>
         }
       >
@@ -193,16 +193,14 @@ export default function SubscriptionsView({ subs, onSave, onDelete, onToggle, on
                       >
                         <Info size={13} />
                       </IconButton>
-                      {sub.dataLimitEnabled && (
-                        <IconButton
-                          onClick={() => setResetTarget(sub)}
-                          className="hover:border-primary/30 hover:text-primary"
-                          title="Reset quota + nouvelle expiration"
-                          aria-label={`Remettre le quota de ${sub.clientName} à zéro`}
-                        >
-                          <RotateCcw size={13} />
-                        </IconButton>
-                      )}
+                      <IconButton
+                        onClick={() => setResetTarget(sub)}
+                        className="hover:border-primary/30 hover:text-primary"
+                        title="Renouveler / reset quota"
+                        aria-label={`Renouveler l'abonnement de ${sub.clientName}`}
+                      >
+                        <RotateCcw size={13} />
+                      </IconButton>
                       <IconButton
                         onClick={() => onToggle(sub.id)}
                         className={sub.status === "active" ? "hover:text-amber-400" : "hover:text-emerald-400"}
@@ -237,7 +235,7 @@ export default function SubscriptionsView({ subs, onSave, onDelete, onToggle, on
         <ResetQuotaModal
           subscription={resetTarget}
           onClose={() => setResetTarget(null)}
-          onConfirm={(expiresAt) => onResetQuota(resetTarget.id, { expiresAt })}
+          onConfirm={(payload) => onResetQuota(resetTarget.id, payload)}
         />
       )}
 

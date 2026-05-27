@@ -27,6 +27,16 @@ export type SubscriptionDraft = Partial<Subscription> & {
   applyToRouter?: boolean;
 };
 
+export interface SubscriptionRenewalPayload {
+  expiresAt: string;
+  rateLimit: Plan;
+  dataLimitEnabled: boolean;
+  dataLimitGb: number;
+  dataLimitBytes: number;
+  dataLimitCheckInterval: string;
+}
+
+
 export interface LogEntry {
   id: string;
   timestamp: string;
