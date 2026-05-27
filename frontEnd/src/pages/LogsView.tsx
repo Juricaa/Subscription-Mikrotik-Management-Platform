@@ -1,23 +1,64 @@
 import { Download, RefreshCw } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Badge, Button, EmptyState, FilterTabs, SearchInput, TableCard } from "../components/ui";
 import { MOCK_LOGS } from "../data/mockData";
+import { fetchLogsFromDatabase } from "../services/mikrotikApi";
+import type { LogEntry } from "../types";
+
+function toCsv(logs: LogEntry[]): string {
+  const headers = ["Horodatage", "Action", "Cible", "Opérateur", "Résultat", "Détail"];
+  const rows = logs.map((log) => [log.timestamp, log.action, log.target, log.operator, log.result, log.detail]);
+  return [headers, ...rows]
+    .map((row) => row.map((value) => `"${String(value ?? "").replace(/"/g, '""')}"`).join(","))
+    .join("\n");
+}
 
 export default function LogsView() {
   const [filter, setFilter] = useState<"all" | "success" | "error">("all");
   const [search, setSearch] = useState("");
+  const [logs, setLogs] = useState<LogEntry[]>(MOCK_LOGS);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const filtered = MOCK_LOGS.filter((log) => {
+  const loadLogs = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const items = await fetchLogsFromDatabase();
+      setLogs(items.length > 0 ? items : MOCK_LOGS);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Backend Django indisponible");
+      setLogs(MOCK_LOGS);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadLogs();
+  }, []);
+
+  const filtered = useMemo(() => logs.filter((log) => {
     const matchFilter = filter === "all" || log.result === filter;
     const q = search.toLowerCase();
     const matchSearch =
       log.action.toLowerCase().includes(q) ||
-      log.target.includes(q) ||
+      log.target.toLowerCase().includes(q) ||
       log.detail.toLowerCase().includes(q) ||
-      log.operator.includes(q);
+      log.operator.toLowerCase().includes(q);
 
     return matchFilter && matchSearch;
-  });
+  }), [filter, logs, search]);
+
+  const exportCsv = () => {
+    const blob = new Blob([toCsv(filtered)], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `logs-mikrotik-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div className="flex flex-col gap-5">
@@ -39,11 +80,21 @@ export default function LogsView() {
             ]}
           />
           <div className="grid grid-cols-2 gap-2 sm:flex">
-            <Button variant="secondary"><RefreshCw size={14} /> Actualiser</Button>
-            <Button variant="secondary"><Download size={14} /> Exporter CSV</Button>
+            <Button variant="secondary" onClick={loadLogs} disabled={loading}>
+              <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Actualiser
+            </Button>
+            <Button variant="secondary" onClick={exportCsv}>
+              <Download size={14} /> Exporter CSV
+            </Button>
           </div>
         </div>
       </div>
+
+      {error && (
+        <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 font-mono text-xs text-amber-300">
+          Backend non joignable : {error}. Les données mockées restent affichées.
+        </div>
+      )}
 
       <TableCard
         footer={<span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">{filtered.length} entrée(s)</span>}

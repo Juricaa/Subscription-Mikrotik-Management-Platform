@@ -1,33 +1,79 @@
 import { RefreshCw, Router } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Button, Card, FormField, Input, PageIntro, SectionHeader } from "../components/ui";
+import { fetchMikroTikSystemResource, getApiBaseUrl } from "../services/mikrotikApi";
+
+function valueOf(result: Record<string, unknown> | undefined, key: string, fallback = "—"): string {
+  const value = result?.[key];
+  if (value === undefined || value === null || value === "") return fallback;
+  return String(value);
+}
+
+function formatMemory(result: Record<string, unknown> | undefined): string {
+  const free = Number(result?.["free-memory"] ?? 0);
+  const total = Number(result?.["total-memory"] ?? 0);
+  if (!free || !total) return "—";
+  const usedMb = (total - free) / 1024 / 1024;
+  const totalMb = total / 1024 / 1024;
+  return `${usedMb.toFixed(0)} / ${totalMb.toFixed(0)} MB`;
+}
 
 export default function RouterView() {
-  const connected = true;
+  const [result, setResult] = useState<Record<string, unknown> | undefined>();
+  const [connected, setConnected] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const testConnection = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetchMikroTikSystemResource();
+      setConnected(Boolean(response.ok));
+      setResult(response.result || {});
+    } catch (err) {
+      setConnected(false);
+      setResult(undefined);
+      setError(err instanceof Error ? err.message : "Impossible de contacter le backend Django");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void testConnection();
+  }, []);
 
   const metrics = [
-    { label: "Hôte MikroTik", value: "192.168.1.1" },
-    { label: "Port API REST", value: "8728" },
-    { label: "Version RouterOS", value: "7.12.1" },
-    { label: "Uptime", value: "14d 06:42:11" },
-    { label: "CPU Load", value: "12%" },
-    { label: "RAM utilisée", value: "38 / 256 MB" },
-    { label: "Bails DHCP actifs", value: "8" },
-    { label: "Simple Queues", value: "6" },
+    { label: "Backend Django", value: getApiBaseUrl() },
+    { label: "État MikroTik", value: connected ? "Connecté" : "Déconnecté" },
+    { label: "Version RouterOS", value: valueOf(result, "version") },
+    { label: "Uptime", value: valueOf(result, "uptime") },
+    { label: "CPU Load", value: `${valueOf(result, "cpu-load", "0")}%` },
+    { label: "RAM utilisée", value: formatMemory(result) },
+    { label: "Architecture", value: valueOf(result, "architecture-name") },
+    { label: "Board", value: valueOf(result, "board-name") },
   ];
 
   return (
     <div className="flex max-w-5xl flex-col gap-5">
       <PageIntro
         icon={Router}
-        tone="success"
-        title={connected ? "Connecté au routeur MikroTik" : "Routeur déconnecté"}
-        description="Surveillance rapide de l’API, du CPU, de la RAM et des règles réseau utilisées par la plateforme."
+        tone={connected ? "success" : "warning"}
+        title={connected ? "Connecté au routeur MikroTik" : "Routeur ou backend non connecté"}
+        description="Le frontend communique avec Django via l’URL VITE_API_BASE_URL, puis Django contacte le routeur MikroTik REST API."
         action={
-          <Button variant="secondary" className="w-full sm:w-auto">
-            <RefreshCw size={14} /> Tester connexion
+          <Button variant="secondary" className="w-full sm:w-auto" onClick={testConnection} disabled={loading}>
+            <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Tester connexion
           </Button>
         }
       />
+
+      {error && (
+        <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 font-mono text-xs text-red-300">
+          {error}
+        </div>
+      )}
 
       <Card className="p-4 sm:p-5">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -38,38 +84,31 @@ export default function RouterView() {
               style={{ animationDelay: `${index * 25}ms` }}
             >
               <span className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground">{metric.label}</span>
-              <div className="mt-1 text-sm font-semibold text-foreground">{metric.value}</div>
+              <div className="mt-1 break-words text-sm font-semibold text-foreground">{metric.value}</div>
             </div>
           ))}
         </div>
       </Card>
 
       <Card className="overflow-hidden">
-        <SectionHeader title="Configuration API Backend" subtitle="Gardez ces valeurs dans votre backend en production, jamais dans le frontend public." />
+        <SectionHeader title="Configuration API" subtitle="Toutes ces valeurs doivent venir du fichier .env global à la racine du projet." />
         <div className="p-4 sm:p-5">
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div className="md:col-span-2">
-              <FormField label="URL MikroTik REST API">
-                <Input defaultValue="http://192.168.1.1:8728/rest" />
+              <FormField label="URL backend Django utilisée par React">
+                <Input value={getApiBaseUrl()} readOnly />
               </FormField>
             </div>
-            <FormField label="Utilisateur API">
-              <Input defaultValue="api_user" />
+            <FormField label="Swagger backend">
+              <Input value={`${getApiBaseUrl().replace(/\/$/, "")}/api/docs/`} readOnly />
             </FormField>
-            <FormField label="Mot de passe API">
-              <Input type="password" defaultValue="supersecret" />
+            <FormField label="OpenAPI schema">
+              <Input value={`${getApiBaseUrl().replace(/\/$/, "")}/api/schema/`} readOnly />
             </FormField>
-            <div className="md:col-span-2">
-              <FormField label="URL Django Backend">
-                <Input defaultValue="https://api.monreseau.bf/v1" />
-              </FormField>
+            <div className="md:col-span-2 rounded-2xl border border-border bg-muted/40 p-4 font-mono text-[11px] leading-relaxed text-muted-foreground">
+              Modifiez l’URL API dans <strong className="text-foreground">../.env</strong> avec <strong className="text-foreground">VITE_API_BASE_URL</strong>, puis redémarrez Vite.
+              Les identifiants MikroTik restent uniquement côté Django dans le même fichier global.
             </div>
-            <FormField label="Timeout requête (secondes)">
-              <Input type="number" defaultValue="10" />
-            </FormField>
-          </div>
-          <div className="mt-5 flex justify-end border-t border-border pt-4">
-            <Button variant="primary">Sauvegarder</Button>
           </div>
         </div>
       </Card>

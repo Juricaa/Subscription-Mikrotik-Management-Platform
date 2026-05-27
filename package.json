@@ -1,4 +1,13 @@
 {
+  "name": "subscription-mikrotik-management-platform-dev",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "frontend:dev": "npm --prefix frontEnd run dev",
+    "frontend:build": "npm --prefix frontEnd run build",
+    "backend:run": "cd backEnd && python manage.py runserver 127.0.0.1:8000",
+    "backend:migrate": "cd backEnd && python manage.py migrate"
+  },
   "devDependencies": {
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",

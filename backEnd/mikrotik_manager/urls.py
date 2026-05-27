@@ -1,6 +1,7 @@
 from django.contrib import admin
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
+from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
 
 from subscriptions.views import (
     ClientSessionViewSet,
@@ -24,6 +25,9 @@ router.register(r"logs", LogEntryViewSet, basename="log")
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/", include(router.urls)),
+    path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
+    path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
+    path("api/redoc/", SpectacularRedocView.as_view(url_name="schema"), name="redoc"),
     path("api/health", MikroTikSystemResourceAPIView.as_view(health_only=True), name="health"),
     path("api/receipts/<uuid:subscription_id>/", ReceiptAPIView.as_view(), name="subscription-receipt"),
     # Compatibility routes used by the current React service.
