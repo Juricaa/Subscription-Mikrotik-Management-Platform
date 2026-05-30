@@ -1,32 +1,54 @@
 from __future__ import annotations
 
+import re
+
 from django.conf import settings
 from django.http import HttpResponse
 
 
-class SimpleCorsMiddleware:
-    """Small CORS helper for local Vite <-> Django development without extra dependencies."""
+def _is_local_dev_origin(origin: str | None) -> bool:
+    if not origin:
+        return False
+    return bool(re.match(r"^https?://(localhost|127\.0\.0\.1):\d+$", origin))
+
+
+class LocalDevCorsMiddleware:
+    """Force les headers CORS en développement local.
+
+    Cette sécurité supplémentaire évite les blocages quand Vite change de port
+    automatiquement, par exemple 5173 -> 5174. Elle complète
+    django-cors-headers et ne doit être active qu'en DEBUG.
+    """
 
     def __init__(self, get_response):
         self.get_response = get_response
 
     def __call__(self, request):
         origin = request.headers.get("Origin")
-        allowed_origin = getattr(settings, "DJANGO_CORS_ORIGIN", None) or None
-        allowed_origin = allowed_origin or __import__("os").environ.get("DJANGO_CORS_ORIGIN", "*")
+        should_apply = bool(settings.DEBUG and _is_local_dev_origin(origin))
 
-        if request.method == "OPTIONS":
+        if should_apply and request.method == "OPTIONS":
             response = HttpResponse(status=204)
         else:
             response = self.get_response(request)
 
-        if origin and (allowed_origin == "*" or origin == allowed_origin):
+        if should_apply and origin:
             response["Access-Control-Allow-Origin"] = origin
             response["Vary"] = "Origin"
-        elif allowed_origin == "*":
-            response["Access-Control-Allow-Origin"] = "*"
+            response["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+            response["Access-Control-Allow-Headers"] = (
+                "Accept, Authorization, Content-Type, X-CSRFToken, X-Requested-With, "
+                "Cache-Control, Pragma"
+            )
+            response["Access-Control-Max-Age"] = "86400"
+            # En développement local on autorise explicitement les credentials
+            # car certains navigateurs/clients fetch peuvent envoyer
+            # credentials: include. Sans ce header, Firefox/Chrome bloquent
+            # même si la réponse HTTP est 200.
+            response["Access-Control-Allow-Credentials"] = "true"
 
-        response["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-CSRFToken"
-        response["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
-        response["Access-Control-Allow-Credentials"] = "true"
         return response
+
+
+# Compatibilité avec l'ancien nom si un fichier settings.py le référence encore.
+SimpleCorsMiddleware = LocalDevCorsMiddleware

@@ -1,7 +1,6 @@
 import { Download, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Badge, Button, EmptyState, FilterTabs, SearchInput, TableCard } from "../components/ui";
-import { MOCK_LOGS } from "../data/mockData";
 import { fetchLogsFromDatabase } from "../services/mikrotikApi";
 import type { LogEntry } from "../types";
 
@@ -16,7 +15,7 @@ function toCsv(logs: LogEntry[]): string {
 export default function LogsView() {
   const [filter, setFilter] = useState<"all" | "success" | "error">("all");
   const [search, setSearch] = useState("");
-  const [logs, setLogs] = useState<LogEntry[]>(MOCK_LOGS);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -25,10 +24,10 @@ export default function LogsView() {
     setError(null);
     try {
       const items = await fetchLogsFromDatabase();
-      setLogs(items.length > 0 ? items : MOCK_LOGS);
+      setLogs(items);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Backend Django indisponible");
-      setLogs(MOCK_LOGS);
+      setLogs([]);
     } finally {
       setLoading(false);
     }
@@ -92,7 +91,7 @@ export default function LogsView() {
 
       {error && (
         <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 font-mono text-xs text-amber-300">
-          Backend non joignable : {error}. Les données mockées restent affichées.
+          Backend non joignable : {error}. Aucune donnée locale de démonstration n’est affichée.
         </div>
       )}
 

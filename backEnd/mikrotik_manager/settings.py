@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from corsheaders.defaults import default_headers, default_methods
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 PROJECT_ROOT = BASE_DIR.parent
 
@@ -54,6 +56,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    "subscriptions.middleware.LocalDevCorsMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -128,22 +131,54 @@ REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
 
-CORS_ALLOWED_ORIGINS = env_list(
+# -----------------------------------------------------------------------------
+# CORS / CSRF - développement local FrontEnd Vite + BackEnd Django
+# -----------------------------------------------------------------------------
+def unique_list(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        if item and item not in seen:
+            seen.add(item)
+            result.append(item)
+    return result
+
+
+_frontend_origins = env_list("VITE_FRONTEND_URL", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174")
+_configured_cors_origins = env_list(
     "DJANGO_CORS_ALLOWED_ORIGINS",
-    os.environ.get("DJANGO_CORS_ORIGIN", "http://localhost:5173,http://127.0.0.1:5173"),
+    os.environ.get("DJANGO_CORS_ORIGIN", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174"),
 )
+
+CORS_ALLOWED_ORIGINS = unique_list(_configured_cors_origins + _frontend_origins)
+
+# En développement, Vite peut parfois démarrer sur 5174/5175 si 5173 est occupé.
+# Ces regex évitent le blocage CORS quand le port change localement.
+CORS_ALLOWED_ORIGIN_REGEXES = env_list("DJANGO_CORS_ALLOWED_ORIGIN_REGEXES", "")
+if DEBUG:
+    CORS_ALLOWED_ORIGIN_REGEXES = unique_list(
+        CORS_ALLOWED_ORIGIN_REGEXES
+        + [
+            r"^http://localhost:[0-9]+$",
+            r"^http://127\.0\.0\.1:[0-9]+$",
+        ]
+    )
+
+# En développement uniquement, cette option peut être activée pour diagnostiquer CORS.
+# Par défaut on garde False et on autorise localhost via liste + regex + LocalDevCorsMiddleware.
+CORS_ALLOW_ALL_ORIGINS = env_bool("DJANGO_CORS_ALLOW_ALL_ORIGINS", False)
 CORS_ALLOW_CREDENTIALS = env_bool("DJANGO_CORS_ALLOW_CREDENTIALS", True)
-CORS_ALLOW_HEADERS = [
-    "accept",
-    "authorization",
-    "content-type",
-    "user-agent",
-    "x-csrftoken",
-    "x-requested-with",
+CORS_ALLOW_METHODS = list(default_methods)
+CORS_ALLOW_HEADERS = list(default_headers) + [
+    "cache-control",
+    "pragma",
 ]
-CSRF_TRUSTED_ORIGINS = env_list(
-    "DJANGO_CSRF_TRUSTED_ORIGINS",
-    os.environ.get("DJANGO_CORS_ORIGIN", "http://localhost:5173,http://127.0.0.1:5173"),
+CSRF_TRUSTED_ORIGINS = unique_list(
+    env_list(
+        "DJANGO_CSRF_TRUSTED_ORIGINS",
+        os.environ.get("DJANGO_CORS_ORIGIN", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174"),
+    )
+    + _frontend_origins
 )
 
 SPECTACULAR_SETTINGS = {

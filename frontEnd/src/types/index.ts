@@ -52,12 +52,22 @@ export interface ConnectedDevice {
   ip: string;
   hostname: string;
   vendor: string;
+  source?: string;
+  accessType?: "wifi" | "ethernet_or_lan" | "unknown";
+  isWireless?: boolean;
   rxBytes: number;
   txBytes: number;
   signalDbm: number | null;
   connectedSince: string;
   interface: string;
   hasSubscription: boolean;
+  subscriptionId?: string | null;
+  clientName?: string;
+  status?: Status | "unsubscribed";
+  dataLimitEnabled?: boolean;
+  dataLimitReached?: boolean;
+  quotaLimitBytes?: number;
+  quotaUsageBytes?: number;
 }
 
 export type View = "dashboard" | "subscriptions" | "clients" | "router" | "logs" | "settings";

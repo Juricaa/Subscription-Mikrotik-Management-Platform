@@ -1,9 +1,8 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { Sidebar } from "../components/layout/Sidebar";
 import { Toast } from "../components/layout/Toast";
 import { Topbar } from "../components/layout/Topbar";
 import { getNavItem } from "../config/navigation";
-import { MOCK_SUBS } from "../data/mockData";
 import { applySubscriptionOnRouter, deleteSubscriptionFromDatabase, fetchSubscriptionsFromDatabase, resetSubscriptionQuotaOnRouter, saveSubscriptionToDatabase } from "../services/mikrotikApi";
 import { gbToBytes } from "../utils/mikrotikQuota";
 import type { Subscription, SubscriptionDraft, SubscriptionRenewalPayload, View } from "../types";
@@ -30,7 +29,7 @@ function PageLoader() {
 export default function App() {
   const [view, setView] = useState<View>("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [subs, setSubs] = useState<Subscription[]>(MOCK_SUBS);
+  const [subs, setSubs] = useState<Subscription[]>([]);
   const [toast, setToast] = useState<{ msg: string; type: "ok" | "err" } | null>(null);
   const [dark, setDark] = useState(true);
 
@@ -38,29 +37,27 @@ export default function App() {
     document.documentElement.classList.toggle("dark", dark);
   }, [dark]);
 
+  const notify = useCallback((msg: string, type: "ok" | "err" = "ok") => setToast({ msg, type }), []);
+
+  const loadSubscriptions = useCallback(async () => {
+    try {
+      const items = await fetchSubscriptionsFromDatabase();
+      setSubs(items);
+    } catch (error) {
+      setSubs([]);
+      notify(error instanceof Error ? error.message : "Impossible de charger les abonnements réels", "err");
+    }
+  }, [notify]);
+
   useEffect(() => {
-    let alive = true;
-    fetchSubscriptionsFromDatabase()
-      .then((items) => {
-        if (alive) {
-          setSubs(items.length > 0 ? items : MOCK_SUBS);
-        }
-      })
-      .catch(() => {
-        if (alive) setSubs(MOCK_SUBS);
-      });
-    return () => {
-      alive = false;
-    };
-  }, []);
+    void loadSubscriptions();
+  }, [loadSubscriptions]);
 
   useEffect(() => {
     if (!toast) return;
     const timer = window.setTimeout(() => setToast(null), 3200);
     return () => window.clearTimeout(timer);
   }, [toast]);
-
-  const notify = (msg: string, type: "ok" | "err" = "ok") => setToast({ msg, type });
 
   const buildFallbackSubscription = (data: SubscriptionDraft, id?: string, existing?: Subscription | null): Subscription => ({
     ...(existing || {}),
@@ -192,7 +189,7 @@ export default function App() {
     }
   };
 
-  const subscribedMacs = useMemo(() => new Set(subs.map((sub) => sub.mac)), [subs]);
+  const subscribedMacs = useMemo(() => new Set(subs.map((sub) => sub.mac.trim().toUpperCase())), [subs]);
   const activeCount = subs.filter((sub) => sub.status === "active").length;
   const currentNav = getNavItem(view);
 
@@ -239,6 +236,7 @@ export default function App() {
                       setView("subscriptions");
                     }}
                     subscribedMacs={subscribedMacs}
+                    onDataSynced={loadSubscriptions}
                   />
                 )}
                 {view === "subscriptions" && (

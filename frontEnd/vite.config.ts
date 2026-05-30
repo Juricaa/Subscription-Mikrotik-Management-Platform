@@ -19,7 +19,7 @@ function figmaAssetResolver() {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, projectRoot, '')
-  const apiBaseUrl = env.VITE_API_BASE_URL || 'http://127.0.0.1:8000'
+  const proxyTarget = env.VITE_PROXY_TARGET || env.VITE_API_BASE_URL || 'http://127.0.0.1:8000'
 
   return {
     envDir: projectRoot,
@@ -37,7 +37,7 @@ export default defineConfig(({ mode }) => {
       port: 5173,
       proxy: {
         '/api': {
-          target: apiBaseUrl,
+          target: proxyTarget,
           changeOrigin: true,
           secure: false,
         },

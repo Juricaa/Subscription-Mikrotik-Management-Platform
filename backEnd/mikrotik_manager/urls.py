@@ -8,7 +8,9 @@ from subscriptions.views import (
     CustomerViewSet,
     LogEntryViewSet,
     MikroTikApplyAPIView,
+    MikroTikConnectedClientsAPIView,
     MikroTikResetQuotaAPIView,
+    MikroTikSyncSubscriptionsAPIView,
     MikroTikSystemResourceAPIView,
     ReceiptAPIView,
     RouterDeviceViewSet,
@@ -32,6 +34,8 @@ urlpatterns = [
     path("api/receipts/<uuid:subscription_id>/", ReceiptAPIView.as_view(), name="subscription-receipt"),
     # Compatibility routes used by the current React service.
     path("api/mikrotik/system/resource", MikroTikSystemResourceAPIView.as_view(), name="mikrotik-resource"),
+    path("api/mikrotik/connected-clients", MikroTikConnectedClientsAPIView.as_view(), name="mikrotik-connected-clients"),
+    path("api/mikrotik/subscriptions/sync", MikroTikSyncSubscriptionsAPIView.as_view(), name="mikrotik-sync-subscriptions"),
     path("api/mikrotik/subscriptions/apply", MikroTikApplyAPIView.as_view(), name="mikrotik-apply"),
     path("api/mikrotik/subscriptions/reset-quota", MikroTikResetQuotaAPIView.as_view(), name="mikrotik-reset-quota"),
 ]

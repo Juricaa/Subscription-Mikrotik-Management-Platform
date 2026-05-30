@@ -168,33 +168,29 @@ add name="{scheduler_name}" interval={check_interval} on-event="{script_name}" c
 
 
 def build_quota_reset_script(subscription: Any) -> str:
+    """Reset quota counters and re-apply the latest plan/quota on RouterOS.
+
+    This function is intentionally based on build_subscription_apply_script() so a renewal
+    can change the plan, expiration and quota in one transaction. If quota is disabled,
+    the generated apply script removes the quota scheduler/script from MikroTik.
+    """
     data = subscription_to_script_payload(subscription)
     client_name = _required(data, "clientName")
     ip = _required(data, "ip")
-    mac = str(data.get("mac") or "").upper()
-    rate_limit = str(data.get("rateLimit") or data.get("rate_limit") or "").strip()
     expires_at = str(data.get("expiresAt") or data.get("expires_at") or "non définie").strip()
+    data_limit_enabled = bool(data.get("dataLimitEnabled") or data.get("data_limit_enabled"))
     quota_gb = Decimal(str(data.get("dataLimitGb") or data.get("data_limit_gb") or 0))
-    check_interval = str(data.get("dataLimitCheckInterval") or data.get("data_limit_check_interval") or DEFAULT_QUOTA_INTERVAL).strip()
     names = get_mikrotik_names({"clientName": client_name, "ip": ip})
     queue_name = names["queueName"]
-    scheduler_name = names["schedulerName"]
     safe_client_name = _router_comment(client_name)
-    comment = _router_comment(
-        f"SubManager {client_name}"
-        + (f" | MAC {mac}" if mac else "")
-        + f" | expiration {expires_at}"
-        + (f" | quota {quota_gb}Go" if quota_gb > 0 else " | quota illimité")
-    )
-    rate_limit_fragment = f" max-limit={rate_limit}" if rate_limit else ""
 
-    return f'''# Reset quota data + renouvellement généré par Subscription MikroTik Management Platform - Django backend.
-# Remet le compteur de quota à zéro, débloque l'IP et met à jour l'expiration dans le commentaire.
-# Aucun nouvel abonnement/utilisateur n'est créé.
-# Client: {safe_client_name}
-# IP: {ip}
-# Nouvelle expiration: {expires_at}
+    apply_script = build_subscription_apply_script(data)
+    quota_label = f"quota {quota_gb}Go" if data_limit_enabled and quota_gb > 0 else "quota désactivé"
 
+    return f'''{apply_script}
+
+# Reset final après renouvellement.
+# Le plan, l'expiration et le quota ci-dessus ont déjà été appliqués.
 /ip firewall address-list
 :foreach item in=[find where list="quota-blocked" address="{ip}"] do={{ remove $item }}
 
@@ -202,12 +198,9 @@ def build_quota_reset_script(subscription: Any) -> str:
 :local qid [find where name="{queue_name}"];
 :if ([:len $qid] > 0) do={{
   reset-counters $qid;
-  set $qid disabled=no comment="{comment}"{rate_limit_fragment};
+  set $qid disabled=no;
 }} else={{
   :log warning "SubManager Django reset quota: Simple Queue introuvable {queue_name}";
 }}
 
-/system scheduler
-:foreach task in=[find where name="{scheduler_name}"] do={{ set $task disabled=no interval={check_interval} comment="SubManager quota renouvelé {quota_gb}Go - {queue_name}" }}
-
-:log info "SubManager Django: quota data remis à zéro et expiration renouvelée pour {safe_client_name} ({ip})"'''
+:log info "SubManager Django: renouvellement appliqué pour {safe_client_name} ({ip}) - expiration {expires_at} - {quota_label}"'''
