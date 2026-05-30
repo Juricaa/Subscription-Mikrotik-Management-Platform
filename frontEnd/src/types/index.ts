@@ -53,6 +53,7 @@ export interface ConnectedDevice {
   hostname: string;
   vendor: string;
   source?: string;
+  sourceDetails?: string;
   accessType?: "wifi" | "ethernet_or_lan" | "unknown";
   isWireless?: boolean;
   rxBytes: number;

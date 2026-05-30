@@ -288,7 +288,8 @@ class MikroTikConnectedClientsAPIView(APIView):
     def get(self, request: Request) -> Response:
         try:
             sync = str(request.query_params.get("sync", "true")).lower() != "false"
-            data = collect_realtime_clients(sync_database=sync)
+            include_generic = str(request.query_params.get("includeGeneric", "false")).lower() == "true"
+            data = collect_realtime_clients(sync_database=sync, include_generic=include_generic)
             return Response({"ok": True, **data})
         except Exception as error:
             write_log("sync-connected-clients", result=LogEntry.RESULT_ERROR, detail=str(error))
@@ -300,7 +301,7 @@ class MikroTikSyncSubscriptionsAPIView(APIView):
 
     def post(self, request: Request) -> Response:
         try:
-            data = collect_realtime_clients(sync_database=True)
+            data = collect_realtime_clients(sync_database=True, include_generic=True)
             return Response({"ok": True, "synced": True, **data})
         except Exception as error:
             write_log("sync-subscription-usage", result=LogEntry.RESULT_ERROR, detail=str(error))

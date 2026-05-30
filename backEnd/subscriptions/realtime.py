@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -67,10 +68,20 @@ SOURCE_PRIORITY = {
     "dhcp": 20,
     "queue": 30,
     "ppp": 70,
-    "hotspot": 75,
+    "hotspot": 82,
+    "hotspot-host": 82,
     "capsman": 85,
     "wifi": 90,
 }
+GENERIC_SOURCES = {"arp", "dhcp", "queue"}
+PRECISE_ONLINE_SOURCES = {"hotspot", "hotspot-host", "ppp", "wifi", "capsman"}
+
+
+def env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 def source_priority(source: Any) -> int:
@@ -79,7 +90,24 @@ def source_priority(source: Any) -> int:
 
 def is_wifi_source(source: Any, interface: Any = "") -> bool:
     text = f"{source or ''} {interface or ''}".lower()
-    return any(token in text for token in ("wifi", "wlan", "wireless", "capsman", "cap"))
+    wifi_tokens = ("wifi", "wlan", "wireless", "capsman", "cap")
+    if any(token in text for token in wifi_tokens):
+        return True
+    # Dans ce projet, les utilisateurs Hotspot affichés dans Winbox > IP > Hotspot > Hosts
+    # correspondent aux clients WiFi gérés par le routeur. On le laisse configurable
+    # pour les installations où le Hotspot serait aussi utilisé sur Ethernet.
+    return env_bool("MIKROTIK_TREAT_HOTSPOT_AS_WIFI", True) and "hotspot" in text
+
+
+def sorted_sources(sources: set[str]) -> list[str]:
+    return sorted((str(item) for item in sources if item), key=lambda item: source_priority(item), reverse=True)
+
+
+def primary_source_label(sources: set[str]) -> str:
+    ordered = sorted_sources(sources)
+    if not ordered:
+        return "routeros"
+    return ordered[0]
 
 
 def router_list(endpoint: str, errors: list[str]) -> list[dict[str, Any]]:
@@ -210,13 +238,15 @@ def queue_usage_by_ip_or_name(queues: list[dict[str, Any]]) -> tuple[dict[str, t
     return by_ip, by_name
 
 
-def collect_realtime_clients(sync_database: bool = True) -> dict[str, Any]:
+def collect_realtime_clients(sync_database: bool = True, include_generic: bool = False) -> dict[str, Any]:
+    include_generic = bool(include_generic or env_bool("MIKROTIK_SHOW_GENERIC_ARP_CLIENTS", False))
     errors: list[str] = []
     devices: dict[str, RealDevice] = {}
 
     leases = router_list("/ip/dhcp-server/lease", errors)
     arp_items = router_list("/ip/arp", errors)
     hotspot_active = router_list("/ip/hotspot/active", errors)
+    hotspot_hosts = router_list("/ip/hotspot/host", errors)
     ppp_active = router_list("/ppp/active", errors)
     simple_queues = router_list("/queue/simple", errors)
     # Wireless clients are only visible in registration tables when this RouterOS
@@ -279,6 +309,24 @@ def collect_realtime_clients(sync_database: bool = True) -> dict[str, Any]:
             blocked=str(active.get("address") or "").split("/")[0] in blocked_ips,
         )
 
+    for host in hotspot_hosts:
+        ip = host.get("address") or host.get("to-address")
+        mac = host.get("mac-address")
+        if not ip or not mac:
+            continue
+        upsert(
+            devices,
+            mac=mac,
+            ip=ip,
+            hostname=host.get("user") or host.get("host-name") or host.get("comment") or "Client Hotspot",
+            interface=host.get("server") or host.get("interface") or "hotspot",
+            rx_bytes=parse_int(host.get("bytes-in") or host.get("rx-bytes")),
+            tx_bytes=parse_int(host.get("bytes-out") or host.get("tx-bytes")),
+            connected_since=host.get("uptime") or host.get("idle-time") or "Hotspot actif",
+            source="hotspot",
+            blocked=str(ip).split("/")[0] in blocked_ips or str(host.get("to-address") or "").split("/")[0] in blocked_ips,
+        )
+
     for active in ppp_active:
         caller = active.get("caller-id") or active.get("mac-address") or ""
         mac = caller if ":" in str(caller) or "-" in str(caller) else ""
@@ -323,10 +371,15 @@ def collect_realtime_clients(sync_database: bool = True) -> dict[str, Any]:
     seen_subscription_ids: set[str] = set()
     now = timezone.now()
 
-    # Merge Simple Queue counters into active devices and update subscription usage.
+    # Merge Simple Queue counters only into devices that are already seen as connected.
+    # A Simple Queue can remain present for an offline subscriber; it must not create a
+    # fake connected client in the UI.
     for ip, (rx, tx) in queue_by_ip.items():
         sub = by_ip.get(ip)
-        if sub:
+        if not sub:
+            continue
+        already_online = any(device.ip == ip or (sub.mac and device.mac == normalize_mac(sub.mac)) for device in devices.values())
+        if already_online:
             upsert(
                 devices,
                 mac=sub.mac,
@@ -340,9 +393,23 @@ def collect_realtime_clients(sync_database: bool = True) -> dict[str, Any]:
                 blocked=ip in blocked_ips,
             )
 
+    has_precise_online_source = any(
+        {str(source).lower() for source in device.source} & PRECISE_ONLINE_SOURCES
+        for device in devices.values()
+    )
+
     output: list[dict[str, Any]] = []
     for device in devices.values():
+        device_sources = {str(source).lower() for source in device.source}
         subscription = by_mac.get(normalize_mac(device.mac)) or by_ip.get(device.ip)
+        if (
+            not include_generic
+            and has_precise_online_source
+            and device_sources
+            and device_sources.issubset(GENERIC_SOURCES)
+            and not subscription
+        ):
+            continue
         if subscription:
             seen_subscription_ids.add(str(subscription.id))
             # Prefer queue counters because they are the quota reference.
@@ -386,8 +453,10 @@ def collect_realtime_clients(sync_database: bool = True) -> dict[str, Any]:
                         status=ClientSession.STATUS_ONLINE,
                     )
 
-        source_label = ", ".join(sorted(device.source)) or "routeros"
-        access_type = "wifi" if device.access_type == "wifi" or is_wifi_source(source_label, device.interface) else "ethernet_or_lan"
+        primary_source = primary_source_label(device.source)
+        source_details = ", ".join(sorted_sources(device.source))
+        source_label = primary_source
+        access_type = "wifi" if device.access_type == "wifi" or is_wifi_source(source_details or source_label, device.interface) else "ethernet_or_lan"
         output.append(
             {
                 "mac": device.mac,
@@ -395,6 +464,7 @@ def collect_realtime_clients(sync_database: bool = True) -> dict[str, Any]:
                 "hostname": subscription.customer.name if subscription else (device.hostname or "Client inconnu"),
                 "vendor": source_label,
                 "source": source_label,
+                "sourceDetails": source_details,
                 "accessType": access_type,
                 "isWireless": access_type == "wifi",
                 "rxBytes": int(device.rx_bytes or 0),
@@ -426,6 +496,7 @@ def collect_realtime_clients(sync_database: bool = True) -> dict[str, Any]:
             "dhcpLeases": len(leases),
             "arpEntries": len(arp_items),
             "hotspotActive": len(hotspot_active),
+            "hotspotHosts": len(hotspot_hosts),
             "pppActive": len(ppp_active),
             "simpleQueues": len(simple_queues),
             "wifiRegistrations": len(wireless_legacy_registrations) + len(wifi_registrations) + len(wifiwave2_registrations),

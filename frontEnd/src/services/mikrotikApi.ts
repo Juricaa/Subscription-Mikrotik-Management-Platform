@@ -73,6 +73,7 @@ function normalizeConnectedDevice(data: ConnectedDevice): ConnectedDevice {
     ip: data.ip || "",
     hostname: data.hostname || data.clientName || "Client inconnu",
     vendor: data.vendor || data.source || "RouterOS",
+    sourceDetails: data.sourceDetails || data.source || data.vendor || "RouterOS",
     accessType: data.accessType || (data.isWireless ? "wifi" : "unknown"),
     isWireless: Boolean(data.isWireless || data.accessType === "wifi"),
     rxBytes: Number(data.rxBytes || 0),
@@ -156,8 +157,8 @@ export async function fetchBackendHealth(): Promise<MikroTikSystemResourceRespon
   return apiRequest<MikroTikSystemResourceResponse>("/api/health");
 }
 
-export async function fetchConnectedClientsFromRouter(syncDatabase = true): Promise<ConnectedClientsResponse> {
-  const data = await apiRequest<ConnectedClientsResponse>(`/api/mikrotik/connected-clients?sync=${syncDatabase ? "true" : "false"}`);
+export async function fetchConnectedClientsFromRouter(syncDatabase = true, includeGeneric = false): Promise<ConnectedClientsResponse> {
+  const data = await apiRequest<ConnectedClientsResponse>(`/api/mikrotik/connected-clients?sync=${syncDatabase ? "true" : "false"}&includeGeneric=${includeGeneric ? "true" : "false"}`);
   if (!data.ok) {
     const message = data.error?.message || "Impossible de lire les clients connectés MikroTik";
     throw new Error(message);

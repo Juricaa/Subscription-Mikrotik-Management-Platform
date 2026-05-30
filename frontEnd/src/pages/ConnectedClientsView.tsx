@@ -37,7 +37,7 @@ function SignalBars({ dbm }: { dbm: number | null }) {
 export default function ConnectedClientsView({ onCreateSub, subscribedMacs, onDataSynced }: ConnectedClientsViewProps) {
   const [devices, setDevices] = useState<ConnectedDevice[]>([]);
   const [search, setSearch] = useState("");
-  const [filterIface, setFilterIface] = useState<"all" | "wifi" | "ethernet">("all");
+  const [filterIface, setFilterIface] = useState<"all" | "wifi" | "ethernet">("wifi");
   const [filterSub, setFilterSub] = useState<"all" | "subscribed" | "unsubscribed">("all");
   const [prefill, setPrefill] = useState<{ mac: string; ip: string; clientName?: string; comment?: string } | null>(null);
   const [loading, setLoading] = useState(false);
@@ -50,7 +50,7 @@ export default function ConnectedClientsView({ onCreateSub, subscribedMacs, onDa
     setLoading(true);
     setError(null);
     try {
-      const response = await fetchConnectedClientsFromRouter(true);
+      const response = await fetchConnectedClientsFromRouter(true, false);
       setDevices(response.devices);
       setSources(response.sources || {});
       setWarnings(response.errors || []);
@@ -80,8 +80,8 @@ export default function ConnectedClientsView({ onCreateSub, subscribedMacs, onDa
     const source = (device.source || device.vendor || "").toLowerCase();
     const matchIface =
       filterIface === "all" ||
-      (filterIface === "wifi" && (device.isWireless || device.accessType === "wifi" || iface.includes("wlan") || iface.includes("wifi") || source.includes("wifi") || source.includes("capsman"))) ||
-      (filterIface === "ethernet" && !(device.isWireless || device.accessType === "wifi") && (iface.includes("ether") || iface.includes("arp") || iface.includes("bridge") || source.includes("dhcp") || source.includes("arp")));
+      (filterIface === "wifi" && (device.isWireless || device.accessType === "wifi" || iface.includes("wlan") || iface.includes("wifi") || source.includes("wifi") || source.includes("capsman") || source.includes("hotspot"))) ||
+      (filterIface === "ethernet" && !(device.isWireless || device.accessType === "wifi") && !source.includes("hotspot") && (iface.includes("ether") || iface.includes("arp") || iface.includes("bridge") || source.includes("dhcp") || source.includes("arp")));
     const hasSub = device.hasSubscription || subscribedMacs.has(normalizeMac(device.mac));
     const matchSub =
       filterSub === "all" ||
@@ -165,13 +165,14 @@ export default function ConnectedClientsView({ onCreateSub, subscribedMacs, onDa
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-3">
         {!loading && filtered.length === 0 && (
           <div className="lg:col-span-2 2xl:col-span-3 rounded-2xl border border-border bg-card/80 px-4 py-12 text-center font-mono text-xs text-muted-foreground">
-            Aucun client réel trouvé sur MikroTik. Vérifiez DHCP/ARP/Hotspot/PPP ou cliquez sur Actualiser.
+            Aucun client Hotspot/WiFi réel trouvé sur MikroTik. Vérifiez IP &gt; Hotspot &gt; Hosts, WiFi Registration ou cliquez sur Actualiser.
           </div>
         )}
 
         {filtered.map((device, index) => {
           const hasSub = device.hasSubscription || subscribedMacs.has(normalizeMac(device.mac));
-          const isWireless = Boolean(device.isWireless || device.accessType === "wifi" || device.interface.toLowerCase().includes("wlan") || device.interface.toLowerCase().includes("wifi") || (device.source || "").includes("wifi") || (device.source || "").includes("capsman"));
+          const sourceText = `${device.source || ""} ${device.sourceDetails || ""}`.toLowerCase();
+          const isWireless = Boolean(device.isWireless || device.accessType === "wifi" || device.interface.toLowerCase().includes("wlan") || device.interface.toLowerCase().includes("wifi") || sourceText.includes("wifi") || sourceText.includes("capsman") || sourceText.includes("hotspot"));
           const quotaPercent = device.quotaLimitBytes ? Math.min(100, Math.round(((device.quotaUsageBytes || 0) / device.quotaLimitBytes) * 100)) : 0;
 
           return (
@@ -184,7 +185,10 @@ export default function ConnectedClientsView({ onCreateSub, subscribedMacs, onDa
                   <div className="min-w-0">
                     <div className="truncate text-sm font-semibold text-foreground">{device.clientName || device.hostname}</div>
                     <div className="mt-0.5 font-mono text-[10px] text-muted-foreground">source: {device.vendor}</div>
-                    {device.accessType === "wifi" && <div className="mt-0.5 font-mono text-[10px] text-primary">accès: WiFi réel</div>}
+                    {device.sourceDetails && device.sourceDetails !== device.vendor && (
+                      <div className="mt-0.5 font-mono text-[10px] text-muted-foreground">détails: {device.sourceDetails}</div>
+                    )}
+                    {isWireless && <div className="mt-0.5 font-mono text-[10px] text-primary">accès: Hotspot / WiFi réel</div>}
                   </div>
                 </div>
                 {hasSub ? (
