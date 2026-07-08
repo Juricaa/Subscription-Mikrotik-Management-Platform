@@ -1,0 +1,68 @@
+version: "3.9"
+
+services:
+
+  mariadb:
+    image: mariadb:10.11
+
+    container_name: mikrotik_db
+
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD}
+
+    ports:
+      - "${MYSQL_PORT}:3306"
+
+    volumes:
+      - mariadb_data:/var/lib/mysql
+
+  backend:
+
+    build:
+      context: ./backEnd
+
+    container_name: mikrotik_backend
+
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    depends_on:
+      - mariadb
+
+    volumes:
+      - ./backEnd:/app
+      - ./.env:/app/.env
+
+    ports:
+      - "8000:8000"
+
+  frontend:
+
+    build:
+      context: ./frontEnd
+
+      args:
+        VITE_APP_NAME: ${VITE_APP_NAME}
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+        VITE_USE_VITE_PROXY: ${VITE_USE_VITE_PROXY}
+        VITE_PROXY_TARGET: ${VITE_PROXY_TARGET}
+        VITE_API_WITH_CREDENTIALS: ${VITE_API_WITH_CREDENTIALS}
+
+    container_name: mikrotik_frontend
+
+    depends_on:
+      - backend
+
+    ports:
+      - "5173:80"
+
+volumes:
+  mariadb_data:
