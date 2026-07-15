@@ -3,9 +3,9 @@ import { Sidebar } from "../components/layout/Sidebar";
 import { Toast } from "../components/layout/Toast";
 import { Topbar } from "../components/layout/Topbar";
 import { getNavItem } from "../config/navigation";
-import { applySubscriptionOnRouter, deleteSubscriptionFromDatabase, fetchSubscriptionsFromDatabase, resetSubscriptionQuotaOnRouter, saveSubscriptionToDatabase } from "../services/mikrotikApi";
+import { applySubscriptionOnRouter, deleteSubscriptionFromDatabase, fetchConnectedClientsFromRouter, fetchSubscriptionsFromDatabase, resetSubscriptionQuotaOnRouter, saveSubscriptionToDatabase } from "../services/mikrotikApi";
 import { gbToBytes } from "../utils/mikrotikQuota";
-import type { Subscription, SubscriptionDraft, SubscriptionRenewalPayload, View } from "../types";
+import type { ConnectedDevice, Subscription, SubscriptionDraft, SubscriptionRenewalPayload, View } from "../types";
 
 const DashboardView = lazy(() => import("../pages/DashboardView"));
 const SubscriptionsView = lazy(() => import("../pages/SubscriptionsView"));
@@ -30,6 +30,12 @@ export default function App() {
   const [view, setView] = useState<View>("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [subs, setSubs] = useState<Subscription[]>([]);
+  const [connectedClients, setConnectedClients] = useState<ConnectedDevice[]>([]);
+  const [connectedClientSources, setConnectedClientSources] = useState<Record<string, number>>({});
+  const [connectedClientWarnings, setConnectedClientWarnings] = useState<string[]>([]);
+  const [connectedClientsSyncedAt, setConnectedClientsSyncedAt] = useState("");
+  const [connectedClientsLoading, setConnectedClientsLoading] = useState(false);
+  const [connectedClientsError, setConnectedClientsError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ msg: string; type: "ok" | "err" } | null>(null);
   const [dark, setDark] = useState(true);
 
@@ -49,9 +55,45 @@ export default function App() {
     }
   }, [notify]);
 
+  const loadConnectedClients = useCallback(async (syncDatabase = true, includeGeneric = false) => {
+    setConnectedClientsLoading(true);
+    setConnectedClientsError(null);
+    try {
+      const response = await fetchConnectedClientsFromRouter(syncDatabase, includeGeneric);
+      setConnectedClients(response.devices);
+      setConnectedClientSources(response.sources || {});
+      setConnectedClientWarnings(response.errors || []);
+      setConnectedClientsSyncedAt(
+        response.syncedAt ? new Date(response.syncedAt).toLocaleString("fr-FR") : new Date().toLocaleString("fr-FR"),
+      );
+      return true;
+    } catch (error) {
+      setConnectedClients([]);
+      setConnectedClientSources({});
+      setConnectedClientWarnings([]);
+      setConnectedClientsError(error instanceof Error ? error.message : "Impossible de charger les clients connectés réels");
+      return false;
+    } finally {
+      setConnectedClientsLoading(false);
+    }
+  }, []);
+
+  const refreshRealtimeData = useCallback(async (syncDatabase = true, includeGeneric = false) => {
+    const ok = await loadConnectedClients(syncDatabase, includeGeneric);
+    if (ok && syncDatabase) {
+      await loadSubscriptions();
+    }
+    return ok;
+  }, [loadConnectedClients, loadSubscriptions]);
+
   useEffect(() => {
-    void loadSubscriptions();
-  }, [loadSubscriptions]);
+    void (async () => {
+      const synced = await refreshRealtimeData(true, false);
+      if (!synced) {
+        await loadSubscriptions();
+      }
+    })();
+  }, [loadSubscriptions, refreshRealtimeData]);
 
   useEffect(() => {
     if (!toast) return;
@@ -228,15 +270,35 @@ export default function App() {
           <main className="flex-1 overflow-auto px-4 py-4 sm:px-5 lg:px-6 lg:py-6">
             <div key={view} className="page-enter mx-auto w-full max-w-[1440px]">
               <Suspense fallback={<PageLoader />}>
-                {view === "dashboard" && <DashboardView subs={subs} />}
+                {view === "dashboard" && (
+                  <DashboardView
+                    subs={subs}
+                    connectedClients={connectedClients}
+                    connectedClientsLoading={connectedClientsLoading}
+                    connectedClientsError={connectedClientsError}
+                    connectedClientsSyncedAt={connectedClientsSyncedAt}
+                    onRefreshClients={async () => {
+                      await refreshRealtimeData(true, false);
+                    }}
+                  />
+                )}
                 {view === "clients" && (
                   <ConnectedClientsView
+                    devices={connectedClients}
+                    sources={connectedClientSources}
+                    warnings={connectedClientWarnings}
+                    syncedAt={connectedClientsSyncedAt}
+                    loading={connectedClientsLoading}
+                    error={connectedClientsError}
+                    onRefresh={async () => {
+                      await refreshRealtimeData(true, false);
+                    }}
                     onCreateSub={async (data) => {
                       await handleSaveSub(data);
+                      await refreshRealtimeData(true, false);
                       setView("subscriptions");
                     }}
                     subscribedMacs={subscribedMacs}
-                    onDataSynced={loadSubscriptions}
                   />
                 )}
                 {view === "subscriptions" && (

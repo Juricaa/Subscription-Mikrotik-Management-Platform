@@ -88,6 +88,40 @@ def source_priority(source: Any) -> int:
     return SOURCE_PRIORITY.get(str(source or "").lower(), 0)
 
 
+def infer_interface_access_type(interface: Any) -> str:
+    text = str(interface or "").strip().lower()
+    if not text:
+        return "unknown"
+    if any(token in text for token in ("wlan", "wifi", "wireless", "capsman", "caps-man")):
+        return "wifi"
+    if re.search(r"(^|[^a-z0-9])cap(?:sman)?\d*([^a-z0-9]|$)", text):
+        return "wifi"
+    if any(token in text for token in ("ether", "rj45")):
+        return "ethernet_or_lan"
+    if "bridge" in text:
+        return "ethernet_or_lan"
+    if re.search(r"(^|[^a-z0-9])lan\d*([^a-z0-9]|$)", text):
+        return "ethernet_or_lan"
+    return "unknown"
+
+
+def infer_access_type(source: Any, interface: Any = "") -> str:
+    interface_type = infer_interface_access_type(interface)
+    if interface_type != "unknown":
+        return interface_type
+
+    source_text = str(source or "").strip().lower()
+    if not source_text:
+        return "unknown"
+    if any(token in source_text for token in ("wifi", "wlan", "wireless", "capsman", "caps-man")):
+        return "wifi"
+    if source_text in {"arp", "dhcp", "queue", "ppp"}:
+        return "ethernet_or_lan"
+    if source_text.startswith("hotspot"):
+        return "wifi" if env_bool("MIKROTIK_TREAT_HOTSPOT_AS_WIFI", True) else "unknown"
+    return "unknown"
+
+
 def is_wifi_source(source: Any, interface: Any = "") -> bool:
     text = f"{source or ''} {interface or ''}".lower()
     wifi_tokens = ("wifi", "wlan", "wireless", "capsman", "cap")
@@ -146,12 +180,13 @@ class RealDevice:
         incoming_source = kwargs.get("source")
         incoming_priority = source_priority(incoming_source)
         incoming_interface = kwargs.get("interface")
+        incoming_access_type = infer_access_type(incoming_source, incoming_interface)
 
         if incoming_source:
             self.source.add(str(incoming_source))
-        if is_wifi_source(incoming_source, incoming_interface):
+        if incoming_access_type == "wifi":
             self.access_type = "wifi"
-        elif self.access_type == "unknown" and str(incoming_source or "").lower() in {"arp", "dhcp", "queue"}:
+        elif self.access_type == "unknown" and incoming_access_type == "ethernet_or_lan":
             self.access_type = "ethernet_or_lan"
 
         # ARP/DHCP see every client on the LAN, including WiFi clients.
@@ -456,7 +491,9 @@ def collect_realtime_clients(sync_database: bool = True, include_generic: bool =
         primary_source = primary_source_label(device.source)
         source_details = ", ".join(sorted_sources(device.source))
         source_label = primary_source
-        access_type = "wifi" if device.access_type == "wifi" or is_wifi_source(source_details or source_label, device.interface) else "ethernet_or_lan"
+        access_type = device.access_type if device.access_type != "unknown" else infer_access_type(source_label, device.interface)
+        if access_type == "unknown" and primary_source in GENERIC_SOURCES:
+            access_type = "ethernet_or_lan"
         output.append(
             {
                 "mac": device.mac,
